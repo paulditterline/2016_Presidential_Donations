@@ -1,0 +1,98 @@
+---
+title: "2016 Presidential Donations"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: fill
+    theme: flatly
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+# Packages
+library(flexdashboard)
+library(shiny)
+library(tidyverse)
+library(plotly)
+library(scales)
+library(forcats)
+
+# GGPLOT Theme
+theme_set(theme_bw())
+
+# Data Import
+df <- read_csv("/Users/bi539pd/Google Drive/Work/Personal Projects/2016 Presidential Campaign/App/forapp.csv")
+#df <- read_csv("P00000001-ALL.csv")
+
+# Data Clean- get rid of negative donations
+df$contb_receipt_amt[df$contb_receipt_amt <0] <- NA
+df <- df[!is.na(df$contb_receipt_amt),]
+```
+
+Candidate Comparison {data-orientation=rows}
+=====================================  
+
+Sidebar {.sidebar}
+------------------------------------
+**Introduction**
+
+This applications uses data provided from the Federal Election Committee from the 2016 Presidential election. Donations to candidates are recorded with the contributer's name, city, state, zip, employer, occupation, amount, and date of receipt.
+
+This page lets you compare candidates.
+
+```{r}
+# Rennder selecter for page 1
+renderUI({
+  selectizeInput("cand_select",
+                 "Tab 1: Select Candidates",
+                 choices=unique(df$cand_nm),
+                 multiple=T,
+                 selected=NULL)
+})
+
+# Reactive dataset for page 1
+df1 <- reactive({
+  filter(df, cand_nm %in% input$cand_select)
+})
+```
+
+Row
+---------------------------
+
+### Total Donations (Millions of Dollars)
+```{r}
+renderPlotly({
+  validate(
+    need(length(input$cand_select)>0,"Select Candidates")
+  )
+  df1 <- df1() %>%
+    group_by(cand_nm) %>%
+    summarize("Total Donations" = sum(contb_receipt_amt)/1000000) 
+  
+    df1$cand_nm <- fct_reorder(df1$cand_nm,df1$`Total Donations`)
+    
+    ggplot(df1, aes(x=cand_nm, y=`Total Donations`))+
+    geom_bar(fill="blue",stat="identity")+
+    coord_flip()+
+    scale_y_continuous(label=dollar)+
+    labs(x=NULL,y=NULL)
+})
+
+```
+
+
+### Plot 2
+```{r}
+
+```
+
+
+Row
+--------------------------
+### Plot 3
+```{r}
+
+```
+
+
+

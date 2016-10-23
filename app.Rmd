@@ -16,6 +16,10 @@ library(tidyverse)
 library(plotly)
 library(scales)
 library(forcats)
+library(DT)
+library(lubridate)
+library(leaflet)
+library(maps)
 
 # GGPLOT Theme
 theme_set(theme_bw())
@@ -29,22 +33,22 @@ df$contb_receipt_amt[df$contb_receipt_amt <0] <- NA
 df <- df[!is.na(df$contb_receipt_amt),]
 ```
 
-Candidate Comparison {data-orientation=rows}
+Donation Statistics {data-orientation=rows}
 =====================================  
 
 Sidebar {.sidebar}
 ------------------------------------
 **Introduction**
 
-This applications uses data provided from the Federal Election Committee from the 2016 Presidential election. Donations to candidates are recorded with the contributer's name, city, state, zip, employer, occupation, amount, and date of receipt.
+This application uses data provided from the Federal Election Committee from the 2016 Presidential election. Donations to candidates are recorded with the contributer's name, city, state, zip, employer, occupation, amount, and date of receipt.
 
-This page lets you compare candidates.
+This page lets you compare donation statistics.
 
 ```{r}
 # Rennder selecter for page 1
 renderUI({
   selectizeInput("cand_select",
-                 "Tab 1: Select Candidates",
+                 "Select Candidates",
                  choices=unique(df$cand_nm),
                  multiple=T,
                  selected=NULL)
@@ -81,18 +85,351 @@ renderPlotly({
 ```
 
 
-### Plot 2
+### Number of unique donors (Thousands)
 ```{r}
+renderPlotly({
+  validate(
+    need(length(input$cand_select)>0,"Select Candidates")
+  )
+  df1 <- df1() %>%
+    group_by(cand_nm) %>%
+    summarise("Donors" = length(unique(contbr_nm))/1000)
+  
+  df1$cand_nm <- fct_reorder(df1$cand_nm,df1$Donors)
+  
+   ggplot(df1, aes(x=cand_nm, y=Donors))+
+    geom_bar(fill="blue",stat="identity")+
+    coord_flip()+
+    labs(x=NULL,y=NULL)
+
+})
+```
+
+
+Row {.tabset .tabset-fade}
+--------------------------
+### Donor Statistics
+```{r}
+totals <- reactive({ 
+  totals <- df1() %>%
+  group_by(cand_nm) %>%
+  summarise("Total (Millions)" = sum(contb_receipt_amt)/1000000,
+            "Number of Donations" = n(),
+            "Highest Donation" = max(contb_receipt_amt),
+            "Median Donation" = median(contb_receipt_amt),
+            "Average Donation" = mean(contb_receipt_amt))
+
+totals[,2:6] <- apply(totals[,2:6],2,
+                      function(x) format(x, big.mark=",",
+                                         digits=2))
+totals
+})
+
+renderDataTable({
+    validate(
+    need(length(input$cand_select)>0,"Select Candidates")
+  )
+  datatable(totals(),options=list(searching=FALSE,paging=FALSE))
+})
+
 
 ```
 
+### Donations Over Time
+```{r}
+# Totals by Month
+df$contb_receipt_dt <- dmy(df$contb_receipt_dt)
+df$Month <- floor_date(df$contb_receipt_dt,"month")
+
+df.m <- reactive({
+df.m <-  df1() %>%
+  group_by(cand_nm,Month) %>%
+  summarize(Total = sum(contb_receipt_amt)) %>%
+  mutate(cumsum = cumsum(Total))
+
+df.m$cumsum <- round(df.m$cumsum/1000000,2)
+df.m$cumsum[df.m$cumsum==0] <- NA
+df.m <- na.omit(df.m)
+df.m
+})
+
+# Plot
+renderPlotly({
+    validate(
+    need(length(input$cand_select)>0,"Select Candidates")
+  )
+ggplot(df.m(), aes(x=Month,y=cumsum,col=cand_nm))+
+  geom_line() +
+  labs(x=NULL,y="Total Donations (Millions)",
+       col="candidate")
+  })
+
+```
+
+Donors: Individuals {data-orientation=rows}
+=====================================  
+
+Sidebar {.sidebar}
+------------------------------------
+**Introduction**
+
+This application uses data provided from the Federal Election Committee from the 2016 Presidential election. Donations to candidates are recorded with the contributer's name, city, state, zip, employer, occupation, amount, and date of receipt.
+
+This page lets you look at the top 500 individual donors.
+
+```{r}
+donors <- df %>%
+  group_by(contbr_nm) %>%
+  summarise(Total= sum(contb_receipt_amt)) %>%
+  arrange(desc(Total))
+
+donors <- donors$contbr_nm[1:500]
+
+renderUI({
+  selectizeInput("donors_select",
+                 "Select Donors",
+                 choices=donors,
+                 multiple=TRUE,
+                 selected=NULL)
+})
+
+df.d <- reactive({
+  filter(df, contbr_nm %in% input$donors_select)
+})
+
+```
 
 Row
---------------------------
-### Plot 3
+-------------------------------
+### Sum Donated
 ```{r}
+renderValueBox({
+  valueBox("Total",
+           paste("$",format(sum(df.d()$contb_receipt_amt),big.mark=","),
+                 sep=""),
+           icon="fa-money",
+           color="lightgreen")
+})
+```
+
+### Number Donations
+```{r}
+renderValueBox({
+  valueBox("# Donations",
+           nrow(df.d()),
+           icon="fa-plus-circle",
+           color="lightblue")
+})
+```
+
+### Different Candidates
+```{r}
+renderValueBox({
+  valueBox("# Candidates",
+           length(unique(df.d()$cand_nm)),
+           icon="fa-group",
+           color="lightblue")
+})
 
 ```
+
+Row {.tabset .tabset-fade}
+--------------------
+### Donor Statistics
+```{r}
+renderDataTable({
+    validate(
+    need(length(input$donors_select)>0, "Select Donor(s)")
+  )
+  df.d <- df.d() %>%
+    group_by(contbr_nm) %>%
+    summarise("Number of Donations" = n(),
+              "Min Donation" = min(contb_receipt_amt),
+              "Mean Donation" = mean(contb_receipt_amt),
+              "Max Donation" = max(contb_receipt_amt))
+  df.d$`Mean Donation` <- format(df.d$`Mean Donation`,
+                                 digits=2,
+                                 big.mark=",")
+  df.d$`Max Donation` <- format(df.d$`Max Donation`,
+                                 digits=2,
+                                 big.mark=",")
+  df.d$`Min Donation` <- format(df.d$`Min Donation`,
+                                 digits=2,
+                                 big.mark=",")
+
+  datatable(df.d,options=list(searching=FALSE))
+  
+})
+
+```
+
+### Donor Trends
+```{r}
+renderPlotly({
+      validate(
+    need(length(input$donors_select)>0, "Select Donor(s)")
+  )
+df.d() %>%
+  group_by(contbr_nm, cand_nm, Month) %>%
+  summarise(Sum= sum(contb_receipt_amt)) %>%
+  ggplot(., aes(x=Month,y=Sum,col=contbr_nm)) +
+  geom_point() +
+  geom_line() +
+  facet_wrap(~cand_nm)+
+    labs(y="Donation Amount",
+         x=NULL,
+         col="Donor") +
+  theme(axis.text.x=element_text(angle=90, hjust=1))
+})
+  
+```
+
+
+Donors: Employers {data-orientation=rows}
+=====================================  
+
+Sidebar {.sidebar}
+------------------------------------
+**Introduction**
+
+This application uses data provided from the Federal Election Committee from the 2016 Presidential election. Donations to candidates are recorded with the contributer's name, city, state, zip, employer, occupation, amount, and date of receipt.
+
+This page lets you look at the top 500 employers represented by donors.
+
+```{r}
+donors.e <- df %>%
+  group_by(contbr_employer) %>%
+  summarise(Total= sum(contb_receipt_amt)) %>%
+  arrange(desc(Total))
+
+donors.e <- donors.e$contbr_employer[1:500]
+
+renderUI({
+  selectizeInput("employers_select",
+                 "Select Employers",
+                 choices=donors.e,
+                 multiple=TRUE,
+                 selected=NULL)
+})
+
+df.e <- reactive({
+  filter(df, contbr_employer %in% input$employers_select)
+})
+
+```
+
+Row
+-------------------------------
+### Sum Donated
+```{r}
+renderValueBox({
+  valueBox("Total",
+           paste("$",format(sum(df.e()$contb_receipt_amt),big.mark=","),
+                 sep=""),
+           icon="fa-money",
+           color="lightgreen")
+})
+```
+
+### Number Donations
+```{r}
+renderValueBox({
+  valueBox("# Donations",
+           nrow(df.e()),
+           icon="fa-plus-circle",
+           color="lightblue")
+})
+```
+
+### Different Candidates
+```{r}
+renderValueBox({
+  valueBox("# Candidates",
+           length(unique(df.e()$cand_nm)),
+           icon="fa-group",
+           color="lightblue")
+})
+
+```
+
+Row {.tabset .tabset-fade}
+--------------------
+### Donor Statistics
+```{r}
+renderDataTable({
+    validate(
+    need(length(input$donors_select)>0, "Select Donor(s)")
+  )
+  df.e <- df.e() %>%
+    group_by(contbr_employer) %>%
+    summarise("Number of Donations" = n(),
+              "Min Donation" = min(contb_receipt_amt),
+              "Mean Donation" = mean(contb_receipt_amt),
+              "Max Donation" = max(contb_receipt_amt))
+  df.e$`Mean Donation` <- format(df.e$`Mean Donation`,
+                                 digits=2,
+                                 big.mark=",")
+  df.e$`Max Donation` <- format(df.e$`Max Donation`,
+                                 digits=2,
+                                 big.mark=",")
+  df.e$`Min Donation` <- format(df.e$`Min Donation`,
+                                 digits=2,
+                                 big.mark=",")
+
+  datatable(df.e,options=list(searching=FALSE))
+  
+})
+
+```
+
+### Donor Trends
+```{r}
+renderPlotly({
+      validate(
+    need(length(input$employers_select)>0, "Select Donor(s)")
+  )
+df.e() %>%
+  group_by(contbr_employer, cand_nm, Month) %>%
+  summarise(Sum= sum(contb_receipt_amt)) %>%
+  ggplot(., aes(x=Month,y=Sum,col=contbr_employer)) +
+  geom_point() +
+  geom_line() +
+  facet_wrap(~cand_nm)+
+    labs(y="Donation Amount",
+         x=NULL,
+         col="Employer") +
+  theme(axis.text.x=element_text(angle=90, hjust=1))
+})
+  
+```
+
+Geography {data-orientation=rows}
+=====================================  
+
+Sidebar {.sidebar}
+------------------------------------
+**Introduction**
+
+This application uses data provided from the Federal Election Committee from the 2016 Presidential election. Donations to candidates are recorded with the contributer's name, city, state, zip, employer, occupation, amount, and date of receipt.
+
+This page lets you compare donations geographically
+
+```{r}
+states <- df
+```
+
+Row
+---------------------------
+### Map
+```{r}
+renderLeaflet({
+leaflet() %>%
+  addTiles() %>%  # Add default OpenStreetMap map tiles
+  addMarkers(lng=174.768, lat=-36.852, popup="The birthplace of R")
+  })
+```
+
+
 
 
 
